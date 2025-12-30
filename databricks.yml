@@ -1,0 +1,63 @@
+# Databricks Asset Bundle Configuration
+# This file defines the deployment configuration for Databricks jobs, workflows, and resources
+
+bundle:
+  name: databricks-dab-lab
+
+include:
+  - resources/*.yml
+
+# Variables for different environments
+variables:
+  cluster_id:
+    description: ID of the cluster to use for jobs
+    default: ""
+
+  cluster_name:
+    description: Name of the cluster to use for jobs
+    default: shared-dab-cluster
+
+  warehouse_id:
+    description: SQL warehouse ID for SQL tasks
+    default: ""
+
+  notification_email:
+    description: Email for job notifications
+    default: ""
+
+  catalog:
+    description: Unity Catalog name (or hive_metastore for non-UC workspaces)
+    default: hive_metastore
+
+  schema:
+    description: Schema/database name for tables
+    default: dab_lab
+
+# Environment-specific configurations
+targets:
+  # Development environment
+  dev:
+    mode: development
+    # Authentication via DATABRICKS_HOST and DATABRICKS_TOKEN environment variables
+    # Set in GitHub Actions workflow or local environment
+
+  # Production environment
+  prod:
+    mode: production
+    # Authentication via DATABRICKS_HOST and DATABRICKS_TOKEN environment variables
+
+    # Production-specific overrides
+    # Variables can be overridden here if needed for prod environment
+    # variables:
+    #   catalog: prod_catalog
+
+# Deployment configuration
+sync:
+  include:
+    - "src/**/*.py"
+    - "notebooks/**/*.ipynb"
+    - "notebooks/**/*.py"
+  exclude:
+    - "**/__pycache__"
+    - "**/*.pyc"
+    - "**/.*"

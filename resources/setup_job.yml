@@ -1,0 +1,43 @@
+# Setup Job Configuration
+# One-time job to create sample data for DAB pipelines
+
+resources:
+  jobs:
+    setup_sample_data:
+      name: "DAB Setup - Create Sample Data - ${bundle.target}"
+
+      description: |
+        One-time setup job to create sample data for DAB lab.
+        Run this after Terraform deployment to initialize the environment.
+
+      # Email notifications (configure notification_email variable to enable)
+      # email_notifications:
+      #   on_success:
+      #     - ${var.notification_email}
+      #   on_failure:
+      #     - ${var.notification_email}
+
+      max_concurrent_runs: 1
+      timeout_seconds: 1800 # 30 minutes
+
+      tasks:
+        - task_key: create_sample_data
+          description: Create sample customer data for ETL pipeline
+
+          notebook_task:
+            notebook_path: ../src/setup/create_sample_data.py
+            base_parameters:
+              catalog: hive_metastore
+              schema: dab_lab
+
+          existing_cluster_id: ${var.cluster_id}
+
+          # Libraries pre-installed in Databricks Runtime
+
+          timeout_seconds: 1800
+
+      tags:
+        project: databricks-dab-lab
+        job_type: setup
+        environment: ${bundle.target}
+        managed_by: dab

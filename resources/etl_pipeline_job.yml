@@ -1,0 +1,112 @@
+# ETL Pipeline Job Configuration
+# This job demonstrates a typical ETL workflow using DAB
+
+resources:
+  jobs:
+    etl_pipeline:
+      name: "DAB ETL Pipeline - ${bundle.target}"
+
+      description: |
+        ETL pipeline job managed by Databricks Asset Bundles.
+        Extracts data from source, transforms it, and loads to Delta tables.
+
+      # Email notifications (configure notification_email variable to enable)
+      # email_notifications:
+      #   on_success:
+      #     - ${var.notification_email}
+      #   on_failure:
+      #     - ${var.notification_email}
+
+      # Job schedule (cron format)
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?" # Daily at 2 AM
+        timezone_id: "Europe/Rome"
+        pause_status: PAUSED # Start paused, can be enabled manually
+
+      # Maximum concurrent runs
+      max_concurrent_runs: 1
+
+      # Timeout configuration
+      timeout_seconds: 3600 # 1 hour
+
+      # Job tasks
+      tasks:
+        # Task 1: Extract raw data
+        - task_key: extract_data
+          description: Extract raw data from source
+
+          notebook_task:
+            notebook_path: ../src/etl_pipeline/extract.py
+            base_parameters:
+              source_table: ${var.catalog}.${var.schema}.raw_customer_data
+              target_table: ${var.catalog}.${var.schema}.raw_data
+              environment: ${bundle.target}
+
+          existing_cluster_id: ${var.cluster_id}
+
+          # Libraries pre-installed in Databricks Runtime
+          # libraries:
+          #   - pypi:
+          #       package: pandas
+          #   - pypi:
+          #       package: pyspark
+
+          timeout_seconds: 1200 # 20 minutes
+
+        # Task 2: Transform data (depends on extract)
+        - task_key: transform_data
+          description: Transform and clean raw data
+          depends_on:
+            - task_key: extract_data
+
+          notebook_task:
+            notebook_path: ../src/etl_pipeline/transform.py
+            base_parameters:
+              source_table: ${var.catalog}.${var.schema}.raw_data
+              target_table: ${var.catalog}.${var.schema}.transformed_data
+              environment: ${bundle.target}
+
+          existing_cluster_id: ${var.cluster_id}
+
+          timeout_seconds: 1800 # 30 minutes
+
+        # Task 3: Load to final destination
+        - task_key: load_data
+          description: Load transformed data to final Delta tables
+          depends_on:
+            - task_key: transform_data
+
+          notebook_task:
+            notebook_path: ../src/etl_pipeline/load.py
+            base_parameters:
+              source_table: ${var.catalog}.${var.schema}.transformed_data
+              target_table: ${var.catalog}.${var.schema}.final_data
+              environment: ${bundle.target}
+
+          existing_cluster_id: ${var.cluster_id}
+
+          timeout_seconds: 1200 # 20 minutes
+
+        # Task 4: Data quality validation
+        - task_key: validate_data
+          description: Run data quality checks
+          depends_on:
+            - task_key: load_data
+
+          notebook_task:
+            notebook_path: ../src/etl_pipeline/validate.py
+            base_parameters:
+              target_table: ${var.catalog}.${var.schema}.final_data
+              min_row_count: "100"
+              environment: ${bundle.target}
+
+          existing_cluster_id: ${var.cluster_id}
+
+          timeout_seconds: 600 # 10 minutes
+
+      # Tags for resource management
+      tags:
+        project: databricks-dab-lab
+        job_type: etl
+        environment: ${bundle.target}
+        managed_by: dab

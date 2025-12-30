@@ -1,0 +1,165 @@
+name: Terraform Azure Databricks Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action to perform"
+        required: true
+        type: choice
+        options:
+          - apply
+          - destroy
+        default: "apply"
+      auto_approve:
+        description: "Auto-approve terraform apply/destroy"
+        required: false
+        type: boolean
+        default: false
+
+env:
+  TF_VERSION: "1.14"
+  WORKING_DIR: "./terraform"
+
+jobs:
+  terraform:
+    name: "Terraform ${{ github.event.inputs.action }}"
+    runs-on: ubuntu-latest
+    environment: production
+
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ env.WORKING_DIR }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
+
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -recursive
+        continue-on-error: true
+
+      - name: Terraform Init
+        id: init
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+            -backend-config="storage_account_name=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            -backend-config="container_name=${{ secrets.TF_STATE_CONTAINER_NAME }}" \
+            -backend-config="key=databricks-dab-lab.tfstate"
+
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          terraform plan -no-color -input=false \
+            -var="azure_subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -var="azure_client_id=${{ secrets.AZURE_CLIENT_ID }}" \
+            -var="azure_client_secret=${{ secrets.AZURE_CLIENT_SECRET }}" \
+            -var="azure_tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -var="tf_state_resource_group=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+            -var="tf_state_storage_account=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            -var="tf_state_container_name=${{ secrets.TF_STATE_CONTAINER_NAME }}" \
+            ${{ github.event.inputs.action == 'destroy' && '-destroy' || '' }} \
+            -out=tfplan
+        continue-on-error: false
+
+      - name: Terraform Plan Output
+        id: plan-output
+        run: terraform show -no-color tfplan
+
+      - name: Terraform Apply
+        if: github.event.inputs.action == 'apply'
+        run: |
+          terraform apply -no-color -input=false \
+            ${{ github.event.inputs.auto_approve == 'true' && '-auto-approve' || '' }} \
+            tfplan
+
+      - name: Terraform Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          terraform destroy -no-color -input=false \
+            ${{ github.event.inputs.auto_approve == 'true' && '-auto-approve' || '' }} \
+            -var="azure_subscription_id=${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            -var="azure_client_id=${{ secrets.AZURE_CLIENT_ID }}" \
+            -var="azure_client_secret=${{ secrets.AZURE_CLIENT_SECRET }}" \
+            -var="azure_tenant_id=${{ secrets.AZURE_TENANT_ID }}" \
+            -var="tf_state_resource_group=${{ secrets.TF_STATE_RESOURCE_GROUP }}" \
+            -var="tf_state_storage_account=${{ secrets.TF_STATE_STORAGE_ACCOUNT }}" \
+            -var="tf_state_container_name=${{ secrets.TF_STATE_CONTAINER_NAME }}"
+
+      - name: Terraform Output
+        if: github.event.inputs.action == 'apply' && success()
+        id: output
+        run: |
+          terraform output -json > ../databricks-outputs.json
+          echo "### Terraform Outputs" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          terraform output -no-color >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Next Step:** Add DATABRICKS_CLUSTER_ID to GitHub Secrets" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "gh secret set DATABRICKS_CLUSTER_ID --body=\"$(terraform output -raw databricks_cluster_id)\" --repo ${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Terraform Outputs
+        if: github.event.inputs.action == 'apply' && success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: databricks-outputs
+          path: databricks-outputs.json
+          retention-days: 30
+
+      - name: Comment PR with Results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+            #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
+            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`terraform
+            ${{ steps.plan-output.outputs.stdout }}
+            \`\`\`
+
+            </details>
+
+            *Pushed by: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Status Check
+        if: steps.plan.outcome == 'failure' || steps.apply.outcome == 'failure' || steps.destroy.outcome == 'failure'
+        run: exit 1

@@ -1,0 +1,114 @@
+# ML Training Job Configuration
+# This job demonstrates a machine learning workflow using DAB
+
+resources:
+  jobs:
+    ml_training:
+      name: "DAB ML Training Pipeline - ${bundle.target}"
+
+      description: |
+        Machine Learning training pipeline managed by Databricks Asset Bundles.
+        Trains, evaluates, and registers ML models using MLflow.
+
+      # Email notifications (configure notification_email variable to enable)
+      # email_notifications:
+      #   on_success:
+      #     - ${var.notification_email}
+      #   on_failure:
+      #     - ${var.notification_email}
+
+      # Job schedule (weekly on Sundays at 3 AM)
+      schedule:
+        quartz_cron_expression: "0 0 3 ? * SUN" # Weekly on Sunday at 3 AM
+        timezone_id: "Europe/Rome"
+        pause_status: PAUSED
+
+      max_concurrent_runs: 1
+      timeout_seconds: 7200 # 2 hours
+
+      # Job tasks
+      tasks:
+        # Task 1: Prepare training data
+        - task_key: prepare_training_data
+          description: Prepare and feature engineer training dataset
+
+          notebook_task:
+            notebook_path: ../src/ml_training/prepare_data.py
+            base_parameters:
+              source_table: ${var.catalog}.${var.schema}.final_data
+              feature_table: ${var.catalog}.${var.schema}.ml_features
+              test_size: "0.2"
+              random_seed: "42"
+              environment: ${bundle.target}
+
+          existing_cluster_id: ${var.cluster_id}
+
+          # Libraries pre-installed in Databricks Runtime
+
+          timeout_seconds: 1800 # 30 minutes
+
+        # Task 2: Train model
+        - task_key: train_model
+          description: Train machine learning model with hyperparameter tuning
+          depends_on:
+            - task_key: prepare_training_data
+
+          notebook_task:
+            notebook_path: ../src/ml_training/train_model.py
+            base_parameters:
+              feature_table: ${var.catalog}.${var.schema}.ml_features
+              model_name: dab_lab_model
+              experiment_path: /Shared/dab-lab/experiments/${bundle.target}
+              max_trials: "10"
+              environment: ${bundle.target}
+
+          existing_cluster_id: ${var.cluster_id}
+
+          # Libraries pre-installed in Databricks Runtime
+
+          timeout_seconds: 3600 # 1 hour
+
+        # Task 3: Evaluate model
+        - task_key: evaluate_model
+          description: Evaluate model performance and log metrics
+          depends_on:
+            - task_key: train_model
+
+          notebook_task:
+            notebook_path: ../src/ml_training/evaluate_model.py
+            base_parameters:
+              model_name: dab_lab_model
+              feature_table: ${var.catalog}.${var.schema}.ml_features
+              min_accuracy: "0.75"
+              environment: ${bundle.target}
+
+          existing_cluster_id: ${var.cluster_id}
+
+          # Libraries pre-installed in Databricks Runtime
+
+          timeout_seconds: 1200 # 20 minutes
+
+        # Task 4: Register model (conditional on evaluation)
+        - task_key: register_model
+          description: Register model to MLflow Model Registry
+          depends_on:
+            - task_key: evaluate_model
+
+          notebook_task:
+            notebook_path: ../src/ml_training/register_model.py
+            base_parameters:
+              model_name: dab_lab_model
+              environment: ${bundle.target}
+
+          existing_cluster_id: ${var.cluster_id}
+
+          # Libraries pre-installed in Databricks Runtime
+
+          timeout_seconds: 600 # 10 minutes
+
+      # Tags for resource management
+      tags:
+        project: databricks-dab-lab
+        job_type: ml_training
+        environment: ${bundle.target}
+        managed_by: dab

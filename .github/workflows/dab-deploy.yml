@@ -1,0 +1,95 @@
+name: Databricks Asset Bundle Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment for deployment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - prod
+        default: 'dev'
+      action:
+        description: 'DAB action to perform'
+        required: true
+        type: choice
+        options:
+          - deploy
+          - validate
+          - destroy
+        default: 'deploy'
+
+  push:
+    branches:
+      - main
+    paths:
+      - 'databricks.yml'
+      - 'resources/**'
+      - 'src/**'
+      - 'notebooks/**'
+
+env:
+  DATABRICKS_CLI_VERSION: '0.213.0'
+
+jobs:
+  dab-deployment:
+    name: 'DAB ${{ github.event.inputs.action || ''deploy'' }} to ${{ github.event.inputs.environment || ''dev'' }}'
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+          databricks --version
+
+      - name: Validate DAB Configuration
+        run: |
+          databricks bundle validate -t ${{ github.event.inputs.environment || 'dev' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+      - name: DAB Deploy
+        if: github.event.inputs.action == 'deploy' || github.event.inputs.action == ''
+        run: |
+          databricks bundle deploy -t ${{ github.event.inputs.environment || 'dev' }} \
+            --var="cluster_id=${{ secrets.DATABRICKS_CLUSTER_ID }}"
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+      - name: DAB Destroy
+        if: github.event.inputs.action == 'destroy'
+        run: |
+          databricks bundle destroy -t ${{ github.event.inputs.environment || 'dev' }} --auto-approve
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+      - name: Run DAB Job (Optional)
+        if: github.event.inputs.action == 'deploy' && github.event.inputs.environment == 'dev'
+        run: |
+          echo "Deployment successful. Jobs can be triggered manually from Databricks UI or via CLI"
+          # Uncomment to auto-run ETL job after deployment:
+          # databricks bundle run etl_pipeline -t dev
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+
+      - name: Summary
+        if: success()
+        run: |
+          echo "✅ DAB ${{ github.event.inputs.action || 'deploy' }} completed successfully"
+          echo "Environment: ${{ github.event.inputs.environment || 'dev' }}"
+          echo "Databricks Host: ${{ secrets.DATABRICKS_HOST }}"

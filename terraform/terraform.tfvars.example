@@ -1,0 +1,33 @@
+# Example Terraform variables file
+# Copy this file to terraform.tfvars and fill in your values
+# NEVER commit terraform.tfvars to version control!
+
+# Azure Authentication (use GitHub Secrets in CI/CD)
+azure_subscription_id = "00000000-0000-0000-0000-000000000000"
+azure_client_id       = "00000000-0000-0000-0000-000000000000"
+azure_client_secret   = "your-client-secret-here"
+azure_tenant_id       = "00000000-0000-0000-0000-000000000000"
+
+# Terraform State Backend (these values are used during terraform init)
+tf_state_resource_group  = "rg-databricks-dab"
+tf_state_storage_account = "yourbackendstorage"
+tf_state_container_name  = "tfdab"
+
+# Project Configuration
+project_name        = "databricks-dab-lab"
+environment         = "dev"
+location            = "northeurope"
+resource_group_name = "rg-databricks-dab"  # MUST be an existing RG where SP has Contributor role
+
+# Databricks Configuration
+databricks_sku = "trial"
+
+# Tags
+tags = {
+  Project     = "Databricks-DAB-Lab"
+  Environment = "Development"
+  ManagedBy   = "Terraform"
+  Owner       = "DataEngineering"
+  CostCenter  = "Engineering"
+  Purpose     = "DAB-Tutorial"
+}
